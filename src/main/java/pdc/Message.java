@@ -8,6 +8,7 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -74,13 +75,10 @@ public class Message {
             frame.flush();
 
             byte[] body = frameBytes.toByteArray();
-            ByteArrayOutputStream wire = new ByteArrayOutputStream();
-            DataOutputStream out = new DataOutputStream(wire);
-            out.writeInt(body.length);
-            out.write(body);
-            out.flush();
-
-            return wire.toByteArray();
+            ByteBuffer wire = ByteBuffer.allocate(Integer.BYTES + body.length);
+            wire.putInt(body.length);
+            wire.put(body);
+            return wire.array();
         } catch (IOException e) {
             throw new IllegalStateException("Unable to pack message.", e);
         }
@@ -270,8 +268,7 @@ public class Message {
             throw new IOException("Payload length out of bounds: " + payloadLength);
         }
 
-        byte[] payload = new byte[payloadLength];
-        in.readFully(payload);
+        byte[] payload = readExactly(in, payloadLength);
 
         Message msg = new Message();
         msg.magic = magic;
@@ -300,9 +297,21 @@ public class Message {
         if (len < 0 || len > MAX_TEXT_BYTES) {
             throw new IOException("Invalid text field length: " + len);
         }
-        byte[] bytes = new byte[len];
-        in.readFully(bytes);
+        byte[] bytes = readExactly(in, len);
         return new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    private static byte[] readExactly(InputStream in, int expectedBytes) throws IOException {
+        byte[] data = new byte[expectedBytes];
+        int offset = 0;
+        while (offset < expectedBytes) {
+            int read = in.read(data, offset, expectedBytes - offset);
+            if (read < 0) {
+                throw new EOFException("Unexpected end of stream while reading frame.");
+            }
+            offset += read;
+        }
+        return data;
     }
 
     private static StringBuilder appendJsonField(StringBuilder sb, String name, String value) {
